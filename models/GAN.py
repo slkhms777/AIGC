@@ -8,30 +8,29 @@ num_hiddens = 256
 shape = (batch_size, noise_size)
 mean = 0
 std = 1
-# noise = torch.normal(mean=torch.full(shape, mean), std=torch.full(shape, std))
-# noise = torch.randn(batch_size, noise_size)
 
-# 以灰度图像为例，num of channel=1
 class Generator(nn.Module):
-    def __init__(self, img_size, noise_size, num_hiddens):
+    def __init__(self, img_size, noise_size, num_hiddens, out_channels=1):
         super().__init__()
+        self.img_size = img_size
+        self.out_channels = out_channels
         self.fc1 = nn.Linear(noise_size, num_hiddens)
         self.fc2 = nn.Linear(num_hiddens, num_hiddens)
-        self.fc3 = nn.Linear(num_hiddens, img_size * img_size)
+        self.fc3 = nn.Linear(num_hiddens, img_size * img_size * out_channels)
         self.relu = nn.LeakyReLU()
     
     def forward(self, noise):
         x = self.relu(self.fc1(noise))
         x = self.relu(self.fc2(x))
         x = self.fc3(x)
-        x = x.view(-1, 1, self.img_size, self.img_size)
+        x = x.view(-1, self.out_channels, self.img_size, self.img_size)
         return x
 
 class Discriminator(nn.Module):
-    def __init__(self, img_size, num_hiddens):
+    def __init__(self, img_size, num_hiddens, in_channels=1):
         super().__init__()
         self.flt = nn.Flatten()
-        self.fc1 = nn.Linear(img_size * img_size, num_hiddens)
+        self.fc1 = nn.Linear(img_size * img_size * in_channels, num_hiddens)
         self.fc2 = nn.Linear(num_hiddens, num_hiddens)
         self.relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
@@ -43,16 +42,15 @@ class Discriminator(nn.Module):
         x = self.sigmoid(x)
         return x
 
-
 class GAN(nn.Module):
-    def __init__(self, img_size, noise_size, num_hiddens):
+    def __init__(self, img_size, noise_size, num_hiddens, in_channels=1):
         super().__init__()
-        self.generator = Generator(img_size=img_size, noise_size=noise_size, num_hiddens=num_hiddens)
-        self.discriminator = Discriminator(img_size=img_size, num_hiddens=num_hiddens)
+        self.generator = Generator(img_size=img_size, noise_size=noise_size, num_hiddens=num_hiddens, out_channels=in_channels)
+        self.discriminator = Discriminator(img_size=img_size, num_hiddens=num_hiddens, in_channels=in_channels)
         self.img_size = img_size
         self.noise_size = noise_size
 
-    def train(self, dataloader, num_epochs=10, device='cpu'):
+    def fit(self, dataloader, num_epochs=10, device='cpu'):
         self.generator.to(device)
         self.discriminator.to(device)
         self.generator.train()
