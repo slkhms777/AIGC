@@ -53,6 +53,12 @@ Nowadays, the technologies of image generation/systhesis are a crucial research 
 
     To solve the disadvantages of **AE** and **DAE**, **Variational AutoEncoder** not only compresses the input image into a latent vector, but also requires that these latent vectors follow a probability distribution (usually a standard normal distribution), while retaining the well-designed encoder-decoder architecture of **AE** and **DAE**.
 
+    It should be noted that the loss of a VAE contains not only MSE loss but also KL loss. Specifically, the KL loss is calculated as:
+
+    ```python
+    kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    ```
+
   
 
   **VAE** has many advantages, such as being able to generate new data samples rather than just reconstructing the input, and providing a clear probabilistic interpretation. However, it also has some drawbacks: on the other hand, since **VAE** models the latent space using continuous probability distributions, it cannot effectively handle discrete data. At the same time, when dealing with more complex or large-scale data, the scalability of the model can be limited, and the quality of generated samples is sometimes inferior to that of other generative models.
@@ -61,7 +67,7 @@ Nowadays, the technologies of image generation/systhesis are a crucial research 
 
   * **Vector Quantized Variational AutoEncoder(VQ-VAE)**
 
-    
+    **VQ-VAE** uses a codebook to discretize the latent space, instead of modeling it with a normal distribution as in a standard **VAE**. This approach allows the features produced by the encoder to be quantized into discrete representations. While this enables effective compression and discrete modeling, **VQ-VAE** alone cannot directly generate new images. To sample or generate new images, an additional prior network (such as PixelCNN or Transformer) is required to model the distribution over the discrete latent variables. Without such a prior, **VQ-VAE** can only be used for tasks like reconstruction or feature extraction, rather than true generative modeling.
 
     
 
