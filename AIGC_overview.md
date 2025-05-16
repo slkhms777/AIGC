@@ -69,7 +69,17 @@ Nowadays, the technologies of image generation/systhesis are a crucial research 
 
     **VQ-VAE** uses a codebook to discretize the latent space, instead of modeling it with a normal distribution as in a standard **VAE**. This approach allows the features produced by the encoder to be quantized into discrete representations. While this enables effective compression and discrete modeling, **VQ-VAE** alone cannot directly generate new images. To sample or generate new images, an additional prior network (such as PixelCNN or Transformer) is required to model the distribution over the discrete latent variables. Without such a prior, **VQ-VAE** can only be used for tasks like reconstruction or feature extraction, rather than true generative modeling.
 
-    
+    It should be noted that the loss function of a **VQ-VAE** consists of three parts: the reconstruction loss (MSELoss), the codebook loss, and the commitment loss.
+
+    For its **Prior** model, the loss function is CrossEntropyLoss, since it is an autoregressive model.
+
+    ```python
+    vqvae_loss = recon_loss + vq_loss + beta * commit_loss
+    ```
+
+    ```python
+    prior_loss = CE_loss
+    ```
 
     
 
