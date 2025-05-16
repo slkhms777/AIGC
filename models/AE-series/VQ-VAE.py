@@ -9,34 +9,35 @@ def save_checkpoint(vqvae=None, pixelcnn=None, vqvae_optimizer=None, pixelcnn_op
                    epoch=0, hyperparams=None, checkpoint_dir='./checkpoints'):
     """
     保存训练检查点
-    
-    参数:
-        vqvae: VQ-VAE模型(可选)
-        pixelcnn: PixelCNN Prior模型(可选)
-        vqvae_optimizer: VQ-VAE优化器(可选)
-        pixelcnn_optimizer: PixelCNN优化器(可选)
-        epoch: 当前训练轮次
-        hyperparams: 超参数字典
-        checkpoint_dir: 检查点保存目录
     """
     import os
-    # 创建检查点目录
     os.makedirs(checkpoint_dir, exist_ok=True)
     
+    # 如果是DataParallel，取其module
+    if vqvae is not None and isinstance(vqvae, nn.DataParallel):
+        vqvae_state = vqvae.module.state_dict()
+    elif vqvae is not None:
+        vqvae_state = vqvae.state_dict()
+    else:
+        vqvae_state = None
+
+    if pixelcnn is not None and isinstance(pixelcnn, nn.DataParallel):
+        pixelcnn_state = pixelcnn.module.state_dict()
+    elif pixelcnn is not None:
+        pixelcnn_state = pixelcnn.state_dict()
+    else:
+        pixelcnn_state = None
+
     checkpoint = {
         'epoch': epoch,
         'hyperparams': hyperparams
     }
-    
-    if vqvae is not None:
-        checkpoint['vqvae_state_dict'] = vqvae.state_dict()
-    
+    if vqvae_state is not None:
+        checkpoint['vqvae_state_dict'] = vqvae_state
     if vqvae_optimizer is not None:
         checkpoint['vqvae_optimizer'] = vqvae_optimizer.state_dict()
-    
-    if pixelcnn is not None:
-        checkpoint['pixelcnn_state_dict'] = pixelcnn.state_dict()
-    
+    if pixelcnn_state is not None:
+        checkpoint['pixelcnn_state_dict'] = pixelcnn_state
     if pixelcnn_optimizer is not None:
         checkpoint['pixelcnn_optimizer'] = pixelcnn_optimizer.state_dict()
     
@@ -49,29 +50,24 @@ def load_checkpoint(checkpoint_path, vqvae=None, pixelcnn=None, vqvae_optimizer=
                    pixelcnn_optimizer=None, device='cuda'):
     """
     加载训练检查点
-    
-    参数:
-        checkpoint_path: 检查点文件路径
-        vqvae: VQ-VAE模型(可选)
-        pixelcnn: PixelCNN Prior模型(可选)
-        vqvae_optimizer: VQ-VAE优化器(可选)
-        pixelcnn_optimizer: PixelCNN优化器(可选)
-        device: 计算设备
-    
-    返回:
-        epoch: 已训练的轮次
-        hyperparams: 超参数字典
     """
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
     if vqvae is not None and 'vqvae_state_dict' in checkpoint:
-        vqvae.load_state_dict(checkpoint['vqvae_state_dict'])
+        # 如果模型是DataParallel，直接load；否则用module的参数
+        if isinstance(vqvae, nn.DataParallel):
+            vqvae.module.load_state_dict(checkpoint['vqvae_state_dict'])
+        else:
+            vqvae.load_state_dict(checkpoint['vqvae_state_dict'])
     
     if vqvae_optimizer is not None and 'vqvae_optimizer' in checkpoint:
         vqvae_optimizer.load_state_dict(checkpoint['vqvae_optimizer'])
     
     if pixelcnn is not None and 'pixelcnn_state_dict' in checkpoint:
-        pixelcnn.load_state_dict(checkpoint['pixelcnn_state_dict'])
+        if isinstance(pixelcnn, nn.DataParallel):
+            pixelcnn.module.load_state_dict(checkpoint['pixelcnn_state_dict'])
+        else:
+            pixelcnn.load_state_dict(checkpoint['pixelcnn_state_dict'])
     
     if pixelcnn_optimizer is not None and 'pixelcnn_optimizer' in checkpoint:
         pixelcnn_optimizer.load_state_dict(checkpoint['pixelcnn_optimizer'])
@@ -273,6 +269,9 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
         resume_from: 检查点文件路径（可选），用于恢复训练
     """
     print(f"Training on {device}")
+    if torch.cuda.device_count() > 1:
+        print(f"使用 {torch.cuda.device_count()} 张GPU对vqvae进行训练")
+        model = nn.DataParallel(model)
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     start_epoch = 0
@@ -389,8 +388,14 @@ def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
         checkpoint_freq: 检查点保存频率（轮次）
         resume_from: 检查点文件路径（可选），用于恢复训练
     """
+    if torch.cuda.device_count() > 1:
+        print(f"使用 {torch.cuda.device_count()} 张GPU对prior进行训练")
+        pixelcnn = nn.DataParallel(pixelcnn)
+        vqvae = nn.DataParallel(vqvae)  # 推理也用DataParallel，保证保存/加载一致
+
     pixelcnn = pixelcnn.to(device)
     vqvae = vqvae.to(device)
+    
     vqvae.eval()  # Prior训练时VQ-VAE不更新
     optimizer = optim.Adam(pixelcnn.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
@@ -402,6 +407,9 @@ def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
                                         pixelcnn_optimizer=optimizer, device=device)
         start_epoch += 1  # 从下一个epoch开始
 
+    # 训练记录
+    train_losses = []
+    
     for epoch in range(start_epoch, num_epochs):
         pixelcnn.train()
         epoch_loss = 0
@@ -419,6 +427,7 @@ def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
             optimizer.step()
             epoch_loss += loss.item()
         print(f"Prior Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss/len(dataloader):.4f}")
+        train_losses.append(epoch_loss / len(dataloader))
         
         # 定期保存检查点
         if (epoch + 1) % checkpoint_freq == 0 or (epoch + 1) == num_epochs:
@@ -567,7 +576,8 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
     import torch.nn.functional as F
     
     # 创建模型
-    hyperparams = {
+    # 先加载检查点获取超参数
+    default_hyperparams = {
         'batch_size': num_samples,
         'img_size': 28,
         'img_channel': 1,
@@ -575,48 +585,51 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
         'num_hiddens': 128,
         'book_size': 1024
     }
-    
+    checkpoint = torch.load(vqvae_path, map_location=device)
+    hyperparams = checkpoint.get('hyperparams', default_hyperparams)
+
     vqvae = VQVAE(batch_size=num_samples, 
                  img_size=hyperparams['img_size'], 
                  img_channel=hyperparams['img_channel'], 
                  latent_dim=hyperparams['latent_dim'], 
                  num_hiddens=hyperparams['num_hiddens'], 
                  book_size=hyperparams['book_size'])
-    
     prior = PixelCNN(book_size=hyperparams['book_size'], 
                     latent_dim=hyperparams['latent_dim'], 
                     n_layers=8)
-    
+    # 若有多卡，包裹DataParallel
+    if torch.cuda.device_count() > 1:
+        vqvae = nn.DataParallel(vqvae)
+        prior = nn.DataParallel(prior)
+    vqvae = vqvae.to(device)
+    prior = prior.to(device)
     # 加载模型参数
     try:
         if vqvae_path.endswith('.pt'):
-            # 尝试作为检查点加载
             try:
                 load_checkpoint(vqvae_path, vqvae=vqvae, device=device)
             except:
-                # 如果失败，则尝试作为纯模型参数加载
-                vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
+                if isinstance(vqvae, nn.DataParallel):
+                    vqvae.module.load_state_dict(torch.load(vqvae_path, map_location=device))
+                else:
+                    vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
                 print(f"已加载VQ-VAE模型参数 {vqvae_path}")
     except Exception as e:
         print(f"加载VQ-VAE失败: {e}")
         return None
-    
     try:
         if prior_path.endswith('.pt'):
-            # 尝试作为检查点加载
             try:
                 load_checkpoint(prior_path, pixelcnn=prior, device=device)
             except:
-                # 如果失败，则尝试作为纯模型参数加载
-                prior.load_state_dict(torch.load(prior_path, map_location=device))
+                if isinstance(prior, nn.DataParallel):
+                    prior.module.load_state_dict(torch.load(prior_path, map_location=device))
+                else:
+                    prior.load_state_dict(torch.load(prior_path, map_location=device))
                 print(f"已加载Prior模型参数 {prior_path}")
     except Exception as e:
         print(f"加载Prior失败: {e}")
         return None
-    
-    # 移至指定设备并设为评估模式
-    vqvae = vqvae.to(device)
-    prior = prior.to(device)
     vqvae.eval()
     prior.eval()
     
@@ -653,7 +666,7 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
         flat_indices = indices.reshape(-1)
         z_q = vqvae.vq.codebook(flat_indices)
         batch_size = indices.shape[0]
-        feature_size = h  # 假设h=w
+        feature_size = h  # h=w
         z_q = z_q.view(batch_size, feature_size, feature_size, vqvae.vq.latent_dim)
         z_q = z_q.permute(0, 3, 1, 2).contiguous()
         
