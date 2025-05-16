@@ -3,6 +3,9 @@ from torch import nn
 from torch import optim
 import math
 
+# ======================= VQ-VAE ===========================
+
+# region VQ-VAE
 class Encoder(nn.Module):
     def __init__(self, img_size, num_hiddens, latent_dim):
         super().__init__()
@@ -40,7 +43,7 @@ class VectorQuantization(nn.Module):
             + torch.sum(self.codebook.weight ** 2, dim=1) # [k]    广播成[N, k]
             - 2 * flat_z @ self.codebook.weight.t()       # [N, k]
         )
-        # dist[i][j] = [(ai1 - bj1)^2 + (ai2 - bj2)^2 ……]
+        # dist[i][j] = [(ai1 - bj1)^2 + (ai2 - bj2)^2 …….
 
         # 对于N中每个向量，找到L2距离最近的码本索引
         indices = torch.argmin(dist, dim=1) # [N]
@@ -200,87 +203,13 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
             avg_test_loss = test_loss / len(test_loader)
             test_losses.append(avg_test_loss)
             print(f"Test Loss: {avg_test_loss:.4f}")
-            
-            # 可视化重构结果
-            if epoch % 5 == 0 or epoch == num_epochs - 1:
-                visualize_reconstructions(model, test_loader, device, num_images=10)
-    
     # 保存模型
     torch.save(model.state_dict(), f"vqvae_epoch{num_epochs}.pt")
-    
     return train_losses, test_losses
+# endregion
 
-# 可视化重构结果
-def visualize_reconstructions(model, data_loader, device, num_images=10):
-    """显示原始图像和重构图像"""
-    import matplotlib.pyplot as plt
-    
-    model.eval()
-    with torch.no_grad():
-        # 获取一批数据
-        data, _ = next(iter(data_loader))
-        data = data[:num_images].to(device)
-        
-        # 重构
-        z_e = model.encoder(data)
-        z_q, indices = model.vq(z_e)
-        reconstructions = model.decoder(z_q)
-        
-        # 转到CPU并准备显示
-        data = data.cpu()
-        reconstructions = reconstructions.cpu()
-        
-        # 创建图像网格
-        fig, axes = plt.subplots(2, num_images, figsize=(num_images*2, 4))
-        
-        for i in range(num_images):
-            # 原始图像
-            axes[0, i].imshow(data[i][0], cmap='gray')
-            axes[0, i].set_title('Original')
-            axes[0, i].axis('off')
-            
-            # 重构图像
-            axes[1, i].imshow(reconstructions[i][0], cmap='gray')
-            axes[1, i].set_title('Reconstructed')
-            axes[1, i].axis('off')
-        
-        plt.tight_layout()
-        plt.savefig(f"reconstructions.png")
-        plt.close()
-
-# 示例：加载MNIST数据集并训练VQVAE
-def train_vqvae_on_mnist(batch_size=128, num_epochs=20, latent_dim=16, 
-                         hidden_dim=16, book_size=16):
-    from torchvision import datasets, transforms
-    
-    # 数据预处理
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-    
-    # 加载MNIST
-    train_dataset = datasets.MNIST('data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('data', train=False, download=True, transform=transform)
-    
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    
-    # 创建模型
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = VQVAE(batch_size=batch_size, 
-                  img_size=28, 
-                  img_channel=1, 
-                  latent_dim=latent_dim, 
-                  num_hiddens=hidden_dim, 
-                  book_size=book_size)
-    
-    # 训练
-    train_losses, test_losses = train_vqvae(model, train_loader, test_loader, 
-                                           num_epochs=num_epochs, device=device)
-    
-    return model, train_losses, test_losses
-
-# ==================== Prior 模型（PixelCNN） ====================
+# ======================= prior ===========================
+# region Prior
 class MaskedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, mask_type, padding=0, stride=1):
         super().__init__()
@@ -348,3 +277,55 @@ class PixelCNN(nn.Module):
         
         return logits
 
+def get_prior_train_data(vqvae, dataloader, device):
+    """
+    用训练好的VQ-VAE将原始数据转为PixelCNN Prior训练所需的indices序列
+    返回所有indices的列表（可拼接为Tensor）
+    """
+    vqvae.eval()
+    all_indices = []
+    with torch.no_grad():
+        for data, _ in dataloader:
+            data = data.to(device)
+            z_e = vqvae.encoder(data)
+            _, indices = vqvae.vq(z_e)
+            # 获取空间尺寸
+            h, w = z_e.shape[2], z_e.shape[3]
+            indices = indices.view(data.shape[0], h, w)  # [batch, h, w]
+            all_indices.append(indices.cpu())
+    # 拼接所有batch
+    all_indices = torch.cat(all_indices, dim=0)
+    return all_indices
+
+
+def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device):
+    """
+    训练PixelCNN Prior模型
+    pixelcnn: PixelCNN模型
+    vqvae: 已训练好的VQ-VAE模型
+    dataloader: 原始数据加载器
+    """
+    pixelcnn = pixelcnn.to(device)
+    vqvae = vqvae.to(device)
+    vqvae.eval()  # Prior训练时VQ-VAE不更新
+    optimizer = optim.Adam(pixelcnn.parameters(), lr=1e-3)
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(num_epochs):
+        pixelcnn.train()
+        epoch_loss = 0
+        for data, _ in dataloader:
+            data = data.to(device)
+            with torch.no_grad():
+                z_e = vqvae.encoder(data)
+                _, indices = vqvae.vq(z_e)
+                h, w = z_e.shape[2], z_e.shape[3]
+                indices = indices.view(data.shape[0], h, w)  # [batch, h, w]
+            logits = pixelcnn(indices)  # [batch, book_size, h, w]
+            loss = criterion(logits, indices.long())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        print(f"Prior Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss/len(dataloader):.4f}")
+# endregion
