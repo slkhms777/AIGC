@@ -139,6 +139,7 @@ class Decoder(nn.Module):
         self.num_hiddens = num_hiddens
         self.img_channel = img_channel
         self.batch_size = batch_size
+        self.feature_size = 7  # 固定特征图尺寸
         self.net = nn.Sequential(
             nn.ConvTranspose2d(latent_dim, num_hiddens, kernel_size=4, stride=2, padding=1), # 7x7 -> 14x14
             nn.LeakyReLU(),
@@ -148,8 +149,8 @@ class Decoder(nn.Module):
         )
 
     def forward(self, z_q):
-        feature_size = int(math.sqrt(z_q.shape[0] / self.batch_size))
-        z = z_q.reshape(-1, feature_size, feature_size, self.latent_dim)
+        # 直接用固定的 feature_size
+        z = z_q.view(-1, self.feature_size, self.feature_size, self.latent_dim)
         z = z.permute(0, 3, 1, 2)
         x_recon = self.net(z)
         return x_recon
@@ -251,7 +252,7 @@ class PixelCNN(nn.Module):
 # ======================= 训练函数 =======================
 # region 训练函数
 def train_vqvae(model, train_loader, test_loader=None, num_epochs=10, 
-                learning_rate=1e-3, beta=0.25, device="cuda" if torch.cuda.is_available() else "cpu",
+                learning_rate=0.0001, beta=0.5, device="cuda" if torch.cuda.is_available() else "cpu",
                 checkpoint_dir='./checkpoints', checkpoint_freq=5, resume_from=None):
     """
     训练VQVAE模型，支持检查点保存和恢复
@@ -296,10 +297,20 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
             data = data.to(device)
             optimizer.zero_grad()
             
-            # 前向传播
-            z_e = model.encoder(data)
-            z_q, indices = model.vq(z_e)
-            x_recon = model.decoder(z_q)
+            # 前向传播 - 直接使用模型的forward方法而不是单独访问子模块
+            x_recon = model(data)
+            
+            # 获取中间结果 - 需要考虑DataParallel包装情况
+            if isinstance(model, nn.DataParallel):
+                z_e = model.module.encoder(data)
+                z_q, indices = model.module.vq(z_e)
+            else:
+                z_e = model.encoder(data)
+                z_q, indices = model.vq(z_e)
+            
+            # 修正z_q形状
+            batch, latent_dim, h, w = z_e.shape
+            z_q = z_q.view(batch, h, w, latent_dim).permute(0, 3, 1, 2).contiguous()  # [batch, latent_dim, 7, 7]
             
             # 计算损失
             # 1. 重构损失(Reconstruction Loss)
@@ -324,8 +335,8 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
             
             if batch_idx % 100 == 0:
                 print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {batch_idx}/{len(train_loader)}, "
-                      f"Loss: {loss.item():.4f}, Recon: {recon_loss.item():.4f}, "
-                      f"VQ: {vq_loss.item():.4f}, Commit: {commit_loss.item():.4f}")
+                      f"Loss: {loss.item():.8f}, Recon: {recon_loss.item():.8f}, "
+                      f"VQ: {vq_loss.item():.8f}, Commit: {commit_loss.item():.8f}")
         
         # 记录平均训练损失
         avg_loss = epoch_loss / len(train_loader)
@@ -334,8 +345,8 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
         avg_commit = commit_loss_sum / len(train_loader)
         
         train_losses.append(avg_loss)
-        print(f"Epoch: {epoch+1}/{num_epochs}, Train Loss: {avg_loss:.4f}, "
-              f"Recon: {avg_recon:.4f}, VQ: {avg_vq:.4f}, Commit: {avg_commit:.4f}")
+        print(f"Epoch: {epoch+1}/{num_epochs}, Train Loss: {avg_loss:.8f}, "
+              f"Recon: {avg_recon:.8f}, VQ: {avg_vq:.8f}, Commit: {avg_commit:.8f}")
         
         # 评估测试集
         if test_loader is not None:
@@ -344,9 +355,20 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
             with torch.no_grad():
                 for data, _ in test_loader:
                     data = data.to(device)
-                    z_e = model.encoder(data)
-                    z_q, indices = model.vq(z_e)
-                    x_recon = model.decoder(z_q)
+                    # 使用完整的forward流程
+                    x_recon = model(data)
+                    
+                    # 获取中间结果 - 需要考虑DataParallel包装情况
+                    if isinstance(model, nn.DataParallel):
+                        z_e = model.module.encoder(data)
+                        z_q, indices = model.module.vq(z_e)
+                    else:
+                        z_e = model.encoder(data)
+                        z_q, indices = model.vq(z_e)
+                    
+                    # 修正z_q形状
+                    batch, latent_dim, h, w = z_e.shape
+                    z_q = z_q.view(batch, h, w, latent_dim).permute(0, 3, 1, 2).contiguous()  # [batch, latent_dim, 7, 7]
                     
                     # 计算损失
                     recon_loss = torch.mean((data - x_recon) ** 2)
@@ -358,7 +380,7 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
             
             avg_test_loss = test_loss / len(test_loader)
             test_losses.append(avg_test_loss)
-            print(f"Test Loss: {avg_test_loss:.4f}")
+            print(f"Test Loss: {avg_test_loss:.8f}")
         
         # 定期保存检查点
         if (epoch + 1) % checkpoint_freq == 0 or (epoch + 1) == num_epochs:
@@ -371,8 +393,6 @@ def train_vqvae(model, train_loader, test_loader=None, num_epochs=10,
                            hyperparams=hyperparams, checkpoint_dir=checkpoint_dir)
     
     return train_losses, test_losses
-
-
 def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
                      checkpoint_dir='./checkpoints', checkpoint_freq=5, resume_from=None):
     """
@@ -413,22 +433,17 @@ def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
     for epoch in range(start_epoch, num_epochs):
         pixelcnn.train()
         epoch_loss = 0
-        for data, _ in dataloader:
-            data = data.to(device)
-            with torch.no_grad():
-                z_e = vqvae.encoder(data)
-                _, indices = vqvae.vq(z_e)
-                h, w = z_e.shape[2], z_e.shape[3]
-                indices = indices.view(data.shape[0], h, w)  # [batch, h, w]
-            logits = pixelcnn(indices)  # [batch, book_size, h, w]
+        for data in dataloader:
+            indices = data[0].to(device)  # indices: [batch, h, w], long
+            logits = pixelcnn(indices)    # logits: [batch, book_size, h, w]
             loss = criterion(logits, indices.long())
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
-        print(f"Prior Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss/len(dataloader):.4f}")
+        print(f"Prior Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss/len(dataloader):.8f}")
         train_losses.append(epoch_loss / len(dataloader))
-        
+            
         # 定期保存检查点
         if (epoch + 1) % checkpoint_freq == 0 or (epoch + 1) == num_epochs:
             hyperparams = {
@@ -436,7 +451,7 @@ def train_vqvae_prior(pixelcnn, vqvae, dataloader, num_epochs, device,
                 'num_epochs': num_epochs
             }
             save_checkpoint(pixelcnn=pixelcnn, pixelcnn_optimizer=optimizer, epoch=epoch+1, 
-                          hyperparams=hyperparams, checkpoint_dir=checkpoint_dir)
+                        hyperparams=hyperparams, checkpoint_dir=checkpoint_dir)
 # endregion
 
 
@@ -456,8 +471,8 @@ def get_vqvae_dataloader(batch_size=128):
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
-    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+    train_dataset = datasets.MNIST(root='../data', train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST(root='../data', train=False, download=True, transform=transform)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     return train_loader, test_loader
@@ -480,8 +495,14 @@ def get_prior_dataloader(vqvae, dataloader, device):
     with torch.no_grad():
         for data, _ in dataloader:
             data = data.to(device)
-            z_e = vqvae.encoder(data)
-            _, indices = vqvae.vq(z_e)
+            # 考虑DataParallel包装情况
+            if isinstance(vqvae, nn.DataParallel):
+                z_e = vqvae.module.encoder(data)
+                _, indices = vqvae.module.vq(z_e)
+            else:
+                z_e = vqvae.encoder(data)
+                _, indices = vqvae.vq(z_e)
+                
             h, w = z_e.shape[2], z_e.shape[3]
             indices = indices.view(data.shape[0], h, w)  # [batch, h, w]
             all_indices.append(indices.cpu())
@@ -493,7 +514,7 @@ def get_prior_dataloader(vqvae, dataloader, device):
     return prior_loader
 
 
-def train_vqvae_and_prior(batch_size, img_size, img_channel, latent_dim, num_hiddens, book_size,
+def train_vqvae_and_prior(batch_size, num_epochs, img_size, img_channel, latent_dim, num_hiddens, book_size,
                           vqvae_resume=None, prior_resume=None, checkpoint_dir='./checkpoints'):
     """
     端到端训练流程：先训练VQ-VAE，再训练PixelCNN Prior，支持从检查点恢复训练
@@ -529,7 +550,7 @@ def train_vqvae_and_prior(batch_size, img_size, img_channel, latent_dim, num_hid
                   book_size=book_size)
     
     train_vqvae(vqvae, vqvae_train_loader, vqvae_test_loader, 
-               num_epochs=10, device=device, checkpoint_dir=checkpoint_dir,
+               num_epochs=num_epochs, device=device, checkpoint_dir=checkpoint_dir,
                resume_from=vqvae_resume)
     
     # 保存最终的VQVAE模型（不仅是检查点）
@@ -545,7 +566,7 @@ def train_vqvae_and_prior(batch_size, img_size, img_channel, latent_dim, num_hid
     prior_test_loader = get_prior_dataloader(vqvae, vqvae_test_loader, device)
     
     train_vqvae_prior(pixelcnn, vqvae, prior_train_loader, 
-                     num_epochs=10, device=device, checkpoint_dir=checkpoint_dir,
+                     num_epochs=num_epochs, device=device, checkpoint_dir=checkpoint_dir,
                      resume_from=prior_resume)
     
     # 保存最终的Prior模型（不仅是检查点）
@@ -636,7 +657,11 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
     # 获取潜在空间尺寸
     with torch.no_grad():
         dummy = torch.zeros(1, 1, 28, 28).to(device)
-        z_e = vqvae.encoder(dummy)
+        # 考虑DataParallel包装
+        if isinstance(vqvae, nn.DataParallel):
+            z_e = vqvae.module.encoder(dummy)
+        else:
+            z_e = vqvae.encoder(dummy)
         h, w = z_e.shape[2], z_e.shape[3]
     
     # 自回归采样
@@ -664,13 +689,22 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
         
         # 将indices转换为z_q，然后解码
         flat_indices = indices.reshape(-1)
-        z_q = vqvae.vq.codebook(flat_indices)
-        batch_size = indices.shape[0]
-        feature_size = h  # h=w
-        z_q = z_q.view(batch_size, feature_size, feature_size, vqvae.vq.latent_dim)
-        z_q = z_q.permute(0, 3, 1, 2).contiguous()
         
-        generated = vqvae.decoder(z_q)
+        # 考虑DataParallel包装
+        if isinstance(vqvae, nn.DataParallel):
+            z_q = vqvae.module.vq.codebook(flat_indices)
+            batch_size = indices.shape[0]
+            feature_size = h  # h=w
+            z_q = z_q.view(batch_size, feature_size, feature_size, vqvae.module.vq.latent_dim)
+            z_q = z_q.permute(0, 3, 1, 2).contiguous()
+            generated = vqvae.module.decoder(z_q)
+        else:
+            z_q = vqvae.vq.codebook(flat_indices)
+            batch_size = indices.shape[0]
+            feature_size = h  # h=w
+            z_q = z_q.view(batch_size, feature_size, feature_size, vqvae.vq.latent_dim)
+            z_q = z_q.permute(0, 3, 1, 2).contiguous()
+            generated = vqvae.decoder(z_q)
     
     # 可视化生成的图像
     plt.figure(figsize=(10, 10))
@@ -691,20 +725,21 @@ def generate_new_images(num_samples=16, vqvae_path=None, prior_path=None, device
 if __name__ == '__main__':
     # 超参数设置
     num_epochs = 100
-    batch_size = 256
+    batch_size = 128
     img_size = 28
     img_channel = 1
-    num_hiddens = 128
-    latent_dim = 128
-    book_size = 1024
+    num_hiddens = 512
+    latent_dim = 512
+    book_size = 64
     checkpoint_dir = './checkpoints'
     
     # 训练VQ-VAE和PixelCNN Prior，可选从检查点恢复
-    vqvae_resume = None  # './checkpoints/checkpoint_epoch5.pt' 如果要恢复训练
+    vqvae_resume = './checkpoints/checkpoint_epoch100.pt' 
     prior_resume = None  # './checkpoints/checkpoint_epoch15.pt' 如果要恢复训练
     
     vqvae, pixelcnn = train_vqvae_and_prior(
         batch_size=batch_size,
+        num_epochs=num_epochs,
         img_size=img_size,
         img_channel=img_channel,
         latent_dim=latent_dim,

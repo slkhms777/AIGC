@@ -1,0 +1,1 @@
+python VQ-VAE.py 2>&1 | tee vqvae.log
