@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.optim as optim
 
+data_path = '../../data'
+
 batch_size = 256
 noise_size = 32
 num_hiddens = 256
@@ -42,62 +44,54 @@ class Discriminator(nn.Module):
         x = self.sigmoid(x)
         return x
 
-class GAN(nn.Module):
-    def __init__(self, img_size, noise_size, num_hiddens, in_channels=1):
-        super().__init__()
-        self.generator = Generator(img_size=img_size, noise_size=noise_size, num_hiddens=num_hiddens, out_channels=in_channels)
-        self.discriminator = Discriminator(img_size=img_size, num_hiddens=num_hiddens, in_channels=in_channels)
-        self.img_size = img_size
-        self.noise_size = noise_size
+def train_gan(generator, discriminator, dataloader, noise_size, num_epochs=10, device='cpu'):
+    generator.to(device)
+    discriminator.to(device)
+    generator.train()
+    discriminator.train()
+    criterion = nn.BCELoss()
+    optimizer_g = optim.Adam(generator.parameters(), lr=0.0002)
+    optimizer_d = optim.Adam(discriminator.parameters(), lr=0.0002)
 
-    def fit(self, dataloader, num_epochs=10, device='cpu'):
-        self.generator.to(device)
-        self.discriminator.to(device)
-        self.generator.train()
-        self.discriminator.train()
-        criterion = nn.BCELoss()
-        optimizer_g = optim.Adam(self.generator.parameters(), lr=0.0002)
-        optimizer_d = optim.Adam(self.discriminator.parameters(), lr=0.0002)
+    for epoch in range(num_epochs):
+        for real_imgs, _ in dataloader:
+            real_imgs = real_imgs.to(device)
+            batch_size = real_imgs.size(0)
+            real_labels = torch.ones(batch_size, 1, device=device)
+            fake_labels = torch.zeros(batch_size, 1, device=device)
 
-        for epoch in range(num_epochs):
-            for real_imgs, _ in dataloader:
-                real_imgs = real_imgs.to(device)
-                batch_size = real_imgs.size(0)
-                real_labels = torch.ones(batch_size, 1, device=device)
-                fake_labels = torch.zeros(batch_size, 1, device=device)
+            # 训练判别器
+            noise = torch.randn(batch_size, noise_size, device=device)
+            fake_imgs = generator(noise)
+            outputs_real = discriminator(real_imgs)
+            outputs_fake = discriminator(fake_imgs.detach())
+            loss_d_real = criterion(outputs_real, real_labels)
+            loss_d_fake = criterion(outputs_fake, fake_labels)
+            loss_d = loss_d_real + loss_d_fake
 
-                # 训练判别器
-                noise = torch.randn(batch_size, self.noise_size, device=device)
-                fake_imgs = self.generator(noise)
-                outputs_real = self.discriminator(real_imgs)
-                outputs_fake = self.discriminator(fake_imgs.detach())
-                loss_d_real = criterion(outputs_real, real_labels)
-                loss_d_fake = criterion(outputs_fake, fake_labels)
-                loss_d = loss_d_real + loss_d_fake
+            optimizer_d.zero_grad()
+            loss_d.backward()
+            optimizer_d.step()
 
-                optimizer_d.zero_grad()
-                loss_d.backward()
-                optimizer_d.step()
+            # 训练生成器
+            noise = torch.randn(batch_size, noise_size, device=device)
+            fake_imgs = generator(noise)
+            outputs = discriminator(fake_imgs)
+            loss_g = criterion(outputs, real_labels) # 希望判别器认为生成图片为真
 
-                # 训练生成器
-                noise = torch.randn(batch_size, self.noise_size, device=device)
-                fake_imgs = self.generator(noise)
-                outputs = self.discriminator(fake_imgs)
-                loss_g = criterion(outputs, real_labels) # 希望判别器认为生成图片为真
+            optimizer_g.zero_grad()
+            loss_g.backward()
+            optimizer_g.step()
 
-                optimizer_g.zero_grad()
-                loss_g.backward()
-                optimizer_g.step()
+        print(f"Epoch [{epoch+1}/{num_epochs}] Loss D: {loss_d.item():.4f}, Loss G: {loss_g.item():.4f}")
 
-            print(f"Epoch [{epoch+1}/{num_epochs}] Loss D: {loss_d.item():.4f}, Loss G: {loss_g.item():.4f}")
-
-    def generate(self, num_samples=16, device='cpu'):
-        self.generator.to(device)
-        self.generator.eval()
-        with torch.no_grad():
-            noise = torch.randn(num_samples, self.noise_size, device=device)
-            fake_imgs = self.generator(noise)
-        return fake_imgs.cpu()
+def generate_samples(generator, noise_size, num_samples=16, device='cpu'):
+    generator.to(device)
+    generator.eval()
+    with torch.no_grad():
+        noise = torch.randn(num_samples, noise_size, device=device)
+        fake_imgs = generator(noise)
+    return fake_imgs.cpu()
 
 
 
