@@ -4,7 +4,8 @@
 \usepackage{hyperref}
 \usepackage{listings}
 \usepackage{geometry}
-\geometry{a4paper, margin=2cm}
+\geometry{a4paper, margin=2.5cm}
+\renewcommand{\baselinestretch}{1.5}
 
 \title{Introduce to Artificial Intelligence Homework}
 \author{}
@@ -58,6 +59,15 @@ data and generate fake data that are as realistic as possible (for example, imag
     \item Lack of image diversity
 \end{itemize}
 
+\subsubsection{Wasserstein GAN (WGAN)}
+WGAN addresses the training instability of vanilla GANs by introducing the Wasserstein distance (Earth Mover's Distance) as a new loss metric. This approach provides smoother gradients and alleviates mode collapse. WGAN replaces the discriminator with a "critic" that scores the realness of samples, and enforces a Lipschitz constraint, typically via weight clipping or gradient penalty (WGAN-GP). As a result, WGANs are more stable and easier to train, especially on complex datasets.
+
+\subsubsection{Conditional GAN (CGAN)}
+CGAN extends the GAN framework by conditioning both the generator and discriminator on auxiliary information, such as class labels or attributes. This allows the model to generate images corresponding to specific categories or features, enabling controlled image synthesis. The conditioning is usually implemented by concatenating the label information with the input noise vector and/or the input to the discriminator.
+
+\subsubsection{BigGAN}
+BigGAN, proposed by DeepMind in 2018, scales up the GAN architecture to achieve state-of-the-art image synthesis on large and complex datasets like ImageNet. BigGAN uses larger batch sizes, deeper networks, and advanced regularization techniques. It also incorporates class-conditional information and spectral normalization to stabilize training. BigGAN demonstrates that scaling up GANs leads to significant improvements in image fidelity and diversity, but also requires careful tuning and substantial computational resources.
+
 \subsection{AE Series}
 
 Due to the information density of images is low, there is a significant pixel redundancy. For example, the 
@@ -98,7 +108,8 @@ loss is calculated as:
 \begin{equation}
 \text{KL\_loss} = -0.5 \times \sum \left(1 + \log(\sigma^2) - \mu^2 - \sigma^2\right)
 \end{equation}
-其中 $\mu$ 和 $\sigma^2$ 分别为均值和方差。
+Note that $\mu$ and $\sigma^2$ represent the mean and variance, respectively.
+
 
 \textbf{VAE} has many advantages, such as being able to generate new data samples rather than just 
 reconstructing the input, and providing a clear probabilistic interpretation. However, it also has some 
@@ -302,6 +313,26 @@ These work are all proposed before 2022.10 when the chatgpt firstly released. Bu
 
 
 \section{Latest Advances}
+
+Since late 2022, the field of text-to-image generation has witnessed rapid and transformative advances, driven by both academic research and industry applications. Below, we summarize several of the most influential developments:
+
+\subsection{Stable Diffusion and the Open-Source Revolution}
+Stable Diffusion, released by Stability AI in August 2022, marked a turning point by making high-quality text-to-image diffusion models accessible to the public. Unlike previous proprietary models, Stable Diffusion is fully open-source, allowing researchers, developers, and artists to fine-tune, deploy, and build upon the model freely. Its lightweight architecture enables efficient inference on consumer GPUs, greatly lowering the barrier to entry. The open-source ecosystem around Stable Diffusion has fostered rapid innovation, including community-driven improvements, plug-ins, and creative applications.
+
+\subsection{Midjourney and Community-Driven Innovation}
+Midjourney is a commercial text-to-image platform that has gained popularity for its unique artistic style and user-friendly interface. By leveraging Discord as its primary interaction channel, Midjourney has built a vibrant community where users can collaboratively explore prompt engineering and share results. The model is known for its stylized, imaginative outputs, and frequent updates based on user feedback.
+
+\subsection{DALL\textperiodcentered E 3 and Prompt Engineering}
+OpenAI's DALL\textperiodcentered E 3, released in 2023, further improved the fidelity, coherence, and controllability of generated images. DALL\textperiodcentered E 3 is notable for its deep integration with large language models (LLMs), enabling users to describe complex scenes in natural language and receive highly relevant images. The model demonstrates strong prompt following and can handle nuanced instructions, making prompt engineering a critical skill for users.
+
+\subsection{Imagen Editor and Controllable Generation}
+Google's Imagen Editor extends the Imagen family by introducing fine-grained, interactive image editing capabilities. Users can specify edits using natural language, such as modifying objects, styles, or backgrounds within an image. This controllability is achieved by conditioning the diffusion process on both the original image and the edit instructions, opening new possibilities for creative workflows and content customization.
+
+\subsection{Multimodal Large Models: GPT-4V, Gemini, and Beyond}
+The latest trend is the emergence of multimodal large models, such as OpenAI's GPT-4V and Google's Gemini, which can process and generate both text and images (and even audio or video). These models unify language and vision understanding, enabling tasks like visual question answering, image captioning, and cross-modal reasoning. Their generalization ability and scalability are pushing the boundaries of what generative AI can achieve.
+
+\subsection{Future Trends and Challenges}
+Despite remarkable progress, several challenges remain: improving controllability, reducing biases, ensuring safety, and scaling to higher resolutions and more modalities. The integration of generative models with real-world applications (e.g., design, education, entertainment) is expected to accelerate, while ethical and societal considerations will become increasingly important.
 
 
 \end{document}
