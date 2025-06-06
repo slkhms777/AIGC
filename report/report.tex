@@ -203,6 +203,31 @@ OpenAI made several improvements to DDPM, with three key contributions:
 Since then, diffusion models have risen to prominence and become one of the hottest research directions in 
 image generation.
 
+\subsubsection{DDIM}
+
+DDIM (Denoising Diffusion Implicit Models) is a significant improvement over DDPM that dramatically accelerates
+the sampling process. While DDPM relies on a stochastic Markov chain for denoising, requiring hundreds or thousands 
+of steps, DDIM introduces a non-Markovian deterministic sampling process that allows for high-quality image 
+generation with much fewer steps (e.g., 25 or 50 steps).
+
+The main innovations of DDIM include:
+
+\begin{enumerate}
+    \item \textbf{Deterministic Sampling:} DDIM reparameterizes the reverse process, enabling deterministic 
+    results from the same starting noise, which improves reproducibility and controllability of the results.
+    \item \textbf{Accelerated Inference:} By skipping intermediate time steps, DDIM can dramatically reduce 
+    sampling time while maintaining image quality, making real-time applications feasible.
+    \item \textbf{Flexible Sampling Strategy:} DDIM supports interpolation between deterministic and 
+    stochastic sampling, allowing users to control the degree of randomness in generation by adjusting parameters.
+\end{enumerate}
+
+The mathematical formulation of DDIM is based on the key observation that the original DDPM forward process can 
+be viewed as a special case, while DDIM provides a more general framework. By redefining the conditional distributions 
+of the reverse process, DDIM can achieve generation effects similar to or even better than DDPM with fewer steps.
+
+Overall, DDIM provides a more efficient and flexible solution for diffusion-based generative modeling, becoming 
+the foundation for many subsequent diffusion model improvements.
+
 \subsubsection{Classifier Guidance}
 
 \begin{enumerate}
